@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>フォトフレーム</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+  :root{
+    --fade-duration: 1.6s;
+    --bg: #050505;
+    --ink: #f5f5f2;
+    --ink-dim: rgba(245,245,242,0.62);
+    --glass: rgba(18,18,20,0.58);
+    --glass-border: rgba(245,245,242,0.10);
+    --accent: #d9a35a;
+    --accent-dim: rgba(217,163,90,0.35);
+    --error: #e0796b;
+    --ok: #7fb88a;
+  }
+  @media (prefers-reduced-motion: reduce){
+    :root{ --fade-duration: 0.2s; }
+  }
+  *{ margin:0; padding:0; box-sizing:border-box; }
+  html, body{
+    width:100%; height:100%;
+    background:var(--bg);
+    overflow:hidden;
+    font-family:'Inter', 'Hiragino Sans', 'Yu Gothic', sans-serif;
+  }
+
+  /* ---------- スライドショー本体 ---------- */
+  #frame{
+    position:relative;
+    width:100vw; height:100vh;
+    overflow:hidden;
+  }
+  .slide{
+    position:absolute; inset:0;
+    background-size:cover;
+    background-position:center;
+    background-repeat:no-repeat;
+    opacity:0;
+    transition:opacity var(--fade-duration) ease-in-out;
+  }
+  .slide.active{ opacity:1; }
+  .slide::after{
+    content:"";
+    position:absolute; inset:0;
+    /* 左下の時計を写真の上でも読みやすくする、ごく薄いグラデーション */
+    background:linear-gradient(to top, rgba(0,0,0,0.38) 0%, rgba(0,0,0,0) 32%);
+    pointer-events:none;
+  }
+
+  /* ---------- 時計（シグネチャー要素） ---------- */
+  #clock{
+    position:absolute;
+    left:40px; bottom:34px;
+    z-index:5;
+    color:var(--ink);
+    user-select:none;
+    -webkit-user-select:none;
+  }
+  #clock .time{
+    font-family:'Space Grotesk', sans-serif;
+    font-weight:300;
+    font-size:clamp(48px, 7vw, 92px);
+    line-height:1;
+    letter-spacing:0.5px;
+    font-variant-numeric: tabular-nums;
+    text-shadow:0 2px 18px rgba(0,0,0,0.55);
+  }
+  #clock .time .sec{
+    font-size:0.32em;
+    font-weight:500;
+    color:var(--ink-dim);
+    margin-left:6px;
+    vertical-align:super;
+  }
+  #clock .rule{
+    width:34px; height:1px;
+    background:var(--accent);
+    margin:10px 0 10px 2px;
+    opacity:0.85;
+  }
+  #clock .date{
+    font-size:17px;
+    font-weight:500;
+    letter-spacing:0.3px;
+    color:var(--ink-dim);
+    text-shadow:0 1px 10px rgba(0,0,0,0.5);
+  }
+
+  /* ---------- 空表示・エラー表示 ---------- */
+  #status{
+    position:absolute;
+    top:50%; left:50%;
+    transform:translate(-50%,-50%);
+    z-index:3;
+    max-width:min(420px, 80vw);
+    text-align:center;
+    color:var(--ink-dim);
+    font-size:15px;
+    line-height:1.7;
+    display:none;
+  }
+  #status.show{ display:block; }
+  #status .title{
+    color:var(--ink);
+    font-size:17px;
+    font-weight:600;
+    margin-bottom:8px;
+  }
+  #status.is-error .title{ color:var(--error); }
+
+  /* ---------- 設定ボタン ---------- */
+  #gear{
+    position:absolute;
+    top:22px; right:22px;
+    width:44px; height:44px;
+    border-radius:50%;
+    background:var(--glass);
+    border:1px solid var(--glass-border);
+    backdrop-filter:blur(6px);
+    display:flex; align-items:center; justify-content:center;
+    cursor:pointer;
+    z-index:10;
+    transition:opacity 0.4s ease, transform 0.2s ease;
+  }
+  #gear:hover{ transform:scale(1.06); }
+  #gear svg{ width:20px; height:20px; stroke:var(--ink); fill:none; }
+  #gear.invite{ animation:pulse 2.4s ease-in-out infinite; }
+  @keyframes pulse{
+    0%,100%{ box-shadow:0 0 0 0 var(--accent-dim); }
+    50%{ box-shadow:0 0 0 9px rgba(217,163,90,0); }
+  }
+  body.idle #gear{ opacity:0; pointer-events:none; }
+  body.idle{ cursor:none; }
+
+  /* ---------- 設定パネル ---------- */
+  #settings{
+    position:fixed; inset:0;
+    background:rgba(0,0,0,0.55);
+    backdrop-filter:blur(2px);
+    display:none;
+    align-items:center; justify-content:center;
+    z-index:20;
+    padding:20px;
+  }
+  #settings.open{ display:flex; }
+  #panel{
+    position:relative;
+    width:min(440px, 100%);
+    background:linear-gradient(180deg, rgba(24,24,26,0.96), rgba(18,18,20,0.96));
+    border:1px solid var(--glass-border);
+    border-radius:18px;
+    padding:30px 28px 26px;
+    box-shadow:0 30px 70px rgba(0,0,0,0.5);
+    max-height:90vh;
+    overflow-y:auto;
+  }
+  /* 角の小さなフレームマーカー（写真フレームらしさのモチーフ） */
+  #panel::before, #panel::after,
+  #panel .corner-br, #panel .corner-bl{
+    content:""; position:absolute; width:16px; height:16px;
+    border-color:var(--accent); opacity:0.9;
+  }
+  #panel::before{ top:10px; left:10px; border-top:1.5px solid var(--accent); border-left:1.5px solid var(--accent); }
+  #panel::after{ top:10px; right:10px; border-top:1.5px solid var(--accent); border-right:1.5px solid var(--accent); }
+  #panel .corner-bl{ bottom:10px; left:10px; border-bottom:1.5px solid var(--accent); border-left:1.5px solid var(--accent); }
+  #panel .corner-br{ bottom:10px; right:10px; border-bottom:1.5px solid var(--accent); border-right:1.5px solid var(--accent); }
+
+  #panel h2{
+    font-size:19px; font-weight:600; color:var(--ink);
+    margin-bottom:4px;
+  }
+  #panel .sub{ font-size:12.5px; color:var(--ink-dim); margin-bottom:20px; }
+  #panel label{
+    display:block; font-size:12px; font-weight:600;
+    letter-spacing:0.04em; text-transform:uppercase;
+    color:var(--ink-dim); margin:16px 0 7px;
+  }
+  #panel input{
+    width:100%; padding:11px 13px;
+    border-radius:9px;
+    border:1px solid rgba(245,245,242,0.14);
+    background:rgba(0,0,0,0.28);
+    color:var(--ink);
+    font-size:14px;
+    font-family:inherit;
+  }
+  #panel input::placeholder{ color:rgba(245,245,242,0.32); }
+  #panel input:focus{
+    outline:none;
+    border-color:var(--accent);
+    box-shadow:0 0 0 3px var(--accent-dim);
+  }
+  #panel .hint{ font-size:12px; color:rgba(245,245,242,0.45); margin-top:6px; line-height:1.5; }
+  #panel .row{ display:flex; gap:10px; margin-top:26px; }
+  #panel button{
+    flex:1; padding:12px 0;
+    border-radius:9px; border:none;
+    font-size:14px; font-weight:600;
+    font-family:inherit;
+    cursor:pointer;
+    transition:filter 0.15s ease;
+  }
+  #panel button:hover{ filter:brightness(1.08); }
+  #saveBtn{ background:var(--accent); color:#1a1208; }
+  #closeBtn{ background:rgba(245,245,242,0.10); color:var(--ink); }
+  #errorMsg{ color:var(--error); font-size:12.5px; margin-top:12px; min-height:16px; }
+
+  /* ---------- Googleアカウント欄 ---------- */
+  .account-row{
+    display:flex; align-items:center; justify-content:space-between;
+    gap:10px;
+    background:rgba(0,0,0,0.28);
+    border:1px solid rgba(245,245,242,0.14);
+    border-radius:9px;
+    padding:10px 13px;
+  }
+  #accountText{ font-size:14px; color:var(--ink); display:flex; align-items:center; gap:8px; }
+  #accountText .dot{
+    width:7px; height:7px; border-radius:50%;
+    background:rgba(245,245,242,0.3);
+    flex-shrink:0;
+  }
+  #accountText.signed-in .dot{ background:var(--ok); }
+  .btn-sm{
+    flex:none !important;
+    padding:8px 14px !important;
+    font-size:13px !important;
+  }
+  #loginBtn{ background:var(--accent); color:#1a1208; }
+  #logoutBtn{ background:rgba(245,245,242,0.10); color:var(--ink); }
+
+  :focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+
+  @media (max-width: 480px){
+    #clock .time{ font-size:clamp(36px, 11vw, 64px); }
+    #clock{ left:22px; bottom:22px; }
+  }
+</style>
+</head>
+<body>
+  <div id="frame">
+    <div id="status">
+      <div class="title">フォトフレームを設定しましょう</div>
+      <div>右上の <strong>設定</strong> アイコンから、Googleアカウントでログインしてフォルダを設定してください。</div>
+    </div>
+
+    <div id="clock">
+      <div class="time"><span id="hm">--:--</span><span class="sec" id="ss">--</span></div>
+      <div class="rule"></div>
+      <div class="date" id="dateText">----年--月--日（-）</div>
+    </div>
+
+    <div id="gear" class="invite" onclick="openSettings()" role="button" aria-label="設定を開く" tabindex="0">
+      <svg viewBox="0 0 24 24" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3.2"></circle>
+        <path d="M19.4 13.5c.04-.5.04-1 0-1.5l2-1.6-2-3.4-2.4.8a7.6 7.6 0 0 0-1.3-.75L15 4.5h-4l-.4 2.6c-.46.2-.9.45-1.3.75l-2.4-.8-2 3.4 2 1.6c-.04.5-.04 1 0 1.5l-2 1.6 2 3.4 2.4-.8c.4.3.84.55 1.3.75l.4 2.6h4l.4-2.6c.46-.2.9-.45 1.3-.75l2.4.8 2-3.4-2-1.6Z"></path>
+      </svg>
+    </div>
+  </div>
+
+  <div id="settings">
+    <div id="panel">
+      <span class="corner-bl"></span><span class="corner-br"></span>
+      <h2>フォトフレーム設定</h2>
+      <div class="sub">Googleドライブのフォルダから写真を読み込みます</div>
+
+      <label for="loginBtn">Googleアカウント</label>
+      <div class="account-row">
+        <span id="accountText"><span class="dot"></span>未ログイン</span>
+        <button id="loginBtn" class="btn-sm" type="button" onclick="signInExplicit()">Googleでログイン</button>
+        <button id="logoutBtn" class="btn-sm" type="button" onclick="signOut()" style="display:none;">ログアウト</button>
+      </div>
+      <div class="hint">フォルダにアクセスできるGoogleアカウントでログインします。フォルダを公開設定にする必要はありません。</div>
+
+      <label for="folderUrl">Googleドライブ フォルダURL</label>
+      <input id="folderUrl" placeholder="https://drive.google.com/drive/folders/xxxxxxx" autocomplete="off">
+
+      <label for="interval">切り替え間隔（秒）</label>
+      <input id="interval" type="number" min="2" max="3600" placeholder="10">
+
+      <div id="errorMsg"></div>
+
+      <div class="row">
+        <button id="closeBtn" type="button" onclick="closeSettings()">閉じる</button>
+        <button id="saveBtn" type="button" onclick="saveSettings()">保存して開始</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+  /* ===================================================================
+     設定の保存／読込
+     localStorage が使えない環境（一部のプレビュー環境など）では
+     メモリ上の変数にフォールバックします。
+     =================================================================== */
+  const memoryStore = {};
+  function storageGet(key){
+    try { return localStorage.getItem(key); } catch(e){ return memoryStore[key] ?? null; }
+  }
+  function storageSet(key, value){
+    try { localStorage.setItem(key, value); } catch(e){ memoryStore[key] = value; }
+  }
+
+  let config = {
+    folderUrl: storageGet('pf_folderUrl') || '',
+    interval:  parseInt(storageGet('pf_interval'), 10) || 10
+  };
+
+  let photoFiles = [];      // [{id, name}, ...]
+  let currentIndex = -1;
+  let slideTimer = null;
+  let refreshTimer = null;
+  let activeSlide = 0;
+  let slideEls = [];
+  let consecutiveSkips = 0;
+
+  const frame    = document.getElementById('frame');
+  const statusEl = document.getElementById('status');
+  const gearEl   = document.getElementById('gear');
+
+  /* ===================================================================
+     Googleログイン（OAuth / Google Identity Services）
+     APIキーは不要。ユーザーは「Googleでログイン」を一度クリックするだけ。
+     ※ GOOGLE_CLIENT_ID は、このアプリをデプロイする人が
+        Google Cloud Console で一度だけ作成して書き換えてください。
+     =================================================================== */
+  const GOOGLE_CLIENT_ID = 'YOUR_CLIENT_ID.apps.googleusercontent.com';
+  const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.readonly';
+
+  let tokenClient = null;
+  let gisReady = false;
+  let accessToken = null;
+  let tokenExpiresAt = 0;
+
+  function initGis(){
+    if(!(window.google && google.accounts && google.accounts.oauth2)){
+      setTimeout(initGis, 200); // GISスクリプトの読み込み待ち
+      return;
+    }
+    tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: GOOGLE_CLIENT_ID,
+      scope: DRIVE_SCOPE,
+      callback: () => {} // 実際の処理は ensureToken() / signInExplicit() で都度差し替える
+    });
+    gisReady = true;
+
+    if(config.folderUrl){
+      fetchPhotoList();
+      startAutoRefresh();
+    }
+  }
+
+  // 既存のログイン状態を使って、ユーザー操作なしでトークンを再取得する
+  function ensureToken(){
+    return new Promise((resolve) => {
+      if(!gisReady){ resolve(null); return; }
+      if(accessToken && Date.now() < tokenExpiresAt - 60000){
+        resolve(accessToken);
+        return;
+      }
+      tokenClient.callback = (resp) => {
+        if(resp && resp.access_token){
+          accessToken = resp.access_token;
+          tokenExpiresAt = Date.now() + (resp.expires_in * 1000);
+          storageSet('pf_signed_in', '1');
+          updateAccountUI();
+          resolve(accessToken);
+        } else {
+          updateAccountUI();
+          resolve(null);
+        }
+      };
+      tokenClient.error_callback = () => { updateAccountUI(); resolve(null); };
+      try{
+        tokenClient.requestAccessToken({ prompt: '' }); // サイレント取得を試みる
+      } catch(e){
+        resolve(null);
+      }
+    });
+  }
+
+  // ユーザーが「Googleでログイン」を明示的にクリックしたときの処理
+  function signInExplicit(){
+    if(!gisReady) return;
+    tokenClient.callback = (resp) => {
+      if(resp && resp.access_token){
+        accessToken = resp.access_token;
+        tokenExpiresAt = Date.now() + (resp.expires_in * 1000);
+        storageSet('pf_signed_in', '1');
+        updateAccountUI();
+        document.getElementById('errorMsg').textContent = '';
+        gearEl.classList.remove('invite');
+        if(config.folderUrl){
+          fetchPhotoList();
+          startAutoRefresh();
+        }
+      }
+    };
+    tokenClient.requestAccessToken({ prompt: 'consent' });
+  }
+
+  function signOut(){
+    if(accessToken){
+      google.accounts.oauth2.revoke(accessToken, () => {});
+    }
+    accessToken = null;
+    tokenExpiresAt = 0;
+    storageSet('pf_signed_in', '0');
+    clearInterval(slideTimer);
+    clearInterval(refreshTimer);
+    photoFiles = [];
+    updateAccountUI();
+    showStatus('ログアウトしました', '右上の設定アイコンから、再度ログインしてください。');
+  }
+
+  function updateAccountUI(){
+    const signedIn = !!accessToken;
+    const textEl = document.getElementById('accountText');
+    textEl.innerHTML = `<span class="dot"></span>${signedIn ? 'ログイン済み' : '未ログイン'}`;
+    textEl.classList.toggle('signed-in', signedIn);
+    document.getElementById('loginBtn').style.display  = signedIn ? 'none' : 'inline-block';
+    document.getElementById('logoutBtn').style.display = signedIn ? 'inline-block' : 'none';
+  }
+
+  /* ===================================================================
+     Googleドライブからの写真取得
+     =================================================================== */
+  function extractFolderId(url){
+    const m = url.match(/[-\w]{20,}/g);
+    if(!m) return null;
+    // 最も長いトークンをフォルダIDとみなす（URLパラメータの混入を避ける）
+    return m.reduce((a,b) => (b.length > a.length ? b : a));
+  }
+
+  async function fetchPhotoList(){
+    const folderId = extractFolderId(config.folderUrl);
+    if(!folderId){
+      showStatus('フォトフレームを設定しましょう', '右上の設定アイコンから、Googleドライブのフォルダを設定してください。');
+      return;
+    }
+    const token = await ensureToken();
+    if(!token){
+      showStatus('ログインが必要です', '右上の設定アイコンから「Googleでログイン」してください。', true);
+      return;
+    }
+    showStatus('読み込んでいます…', '');
+    try{
+      const q = encodeURIComponent(`'${folderId}' in parents and mimeType contains 'image/' and trashed = false`);
+      const url = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=1000&orderBy=name`;
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+
+      if(data.error){
+        const code = data.error.code;
+        if(code === 401){
+          accessToken = null;
+          updateAccountUI();
+          showStatus('ログインの有効期限が切れました', '右上の設定アイコンから、もう一度「Googleでログイン」してください。', true);
+        } else if(code === 403){
+          showStatus('アクセスが拒否されました', 'このフォルダにアクセスできるGoogleアカウントでログインしているかご確認ください。', true);
+        } else if(code === 404){
+          showStatus('フォルダが見つかりません', 'フォルダURLが正しいかご確認ください。', true);
+        } else {
+          showStatus('読み込みエラー', data.error.message || '時間をおいて再度お試しください。', true);
+        }
+        return;
+      }
+
+      const files = data.files || [];
+      if(files.length === 0){
+        showStatus('写真が見つかりません', 'フォルダ内に画像ファイルを追加してください。', true);
+        photoFiles = [];
+        return;
+      }
+
+      photoFiles = files;
+      gearEl.classList.remove('invite');
+      hideStatus();
+      startSlideshow();
+    } catch(err){
+      showStatus('読み込みエラー', 'ネットワーク接続をご確認のうえ、再度お試しください。', true);
+    }
+  }
+
+  function showStatus(title, body, isError){
+    statusEl.classList.toggle('is-error', !!isError);
+    statusEl.innerHTML = body
+      ? `<div class="title">${title}</div><div>${body}</div>`
+      : `<div class="title">${title}</div>`;
+    statusEl.classList.add('show');
+  }
+  function hideStatus(){ statusEl.classList.remove('show'); }
+
+  /* ---------- 写真本体の取得（OAuthトークンで認証つきダウンロード） ---------- */
+  const blobCache = new Map();   // fileId -> objectURL
+  const cacheOrder = [];
+  const MAX_CACHE = 4;
+
+  async function getPhotoBlobUrl(fileId){
+    if(blobCache.has(fileId)) return blobCache.get(fileId);
+    const token = await ensureToken();
+    if(!token) return null;
+    try{
+      const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if(!res.ok) return null;
+      const blob = await res.blob();
+      const objUrl = URL.createObjectURL(blob);
+      blobCache.set(fileId, objUrl);
+      cacheOrder.push(fileId);
+      if(cacheOrder.length > MAX_CACHE){
+        const evictId = cacheOrder.shift();
+        const evictUrl = blobCache.get(evictId);
+        if(evictUrl) URL.revokeObjectURL(evictUrl);
+        blobCache.delete(evictId);
+      }
+      return objUrl;
+    } catch(e){
+      return null;
+    }
+  }
+
+  function preloadDecode(blobUrl){
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload  = () => resolve(true);
+      img.onerror = () => resolve(false);
+      img.src = blobUrl;
+    });
+  }
+
+  function ensureSlideEls(){
+    if(slideEls.length) return;
+    for(let i=0;i<2;i++){
+      const d = document.createElement('div');
+      d.className = 'slide';
+      frame.insertBefore(d, frame.firstChild);
+      slideEls.push(d);
+    }
+  }
+
+  async function showNextPhoto(){
+    if(photoFiles.length === 0) return;
+    ensureSlideEls();
+    currentIndex = (currentIndex + 1) % photoFiles.length;
+    const file = photoFiles[currentIndex];
+
+    const url = await getPhotoBlobUrl(file.id);
+    if(!url){
+      // ネットワーク/認証エラーの可能性が高いため、状態を再確認する
+      clearInterval(slideTimer);
+      fetchPhotoList();
+      return;
+    }
+
+    const decoded = await preloadDecode(url);
+    if(!decoded){
+      consecutiveSkips++;
+      if(consecutiveSkips >= photoFiles.length){
+        showStatus('写真を読み込めません', 'フォルダ内の画像ファイルをご確認ください。', true);
+        consecutiveSkips = 0;
+        return;
+      }
+      setTimeout(showNextPhoto, 50); // この1枚だけ壊れている場合はスキップ
+      return;
+    }
+    consecutiveSkips = 0;
+
+    // 次の写真を裏で先読みしておく（表示の滑らかさのため）
+    const nextFile = photoFiles[(currentIndex + 1) % photoFiles.length];
+    getPhotoBlobUrl(nextFile.id);
+
+    const nextSlideIdx = 1 - activeSlide;
+    slideEls[nextSlideIdx].style.backgroundImage = `url("${url}")`;
+    slideEls[nextSlideIdx].classList.add('active');
+    slideEls[activeSlide].classList.remove('active');
+    activeSlide = nextSlideIdx;
+  }
+
+  function startSlideshow(){
+    clearInterval(slideTimer);
+    showNextPhoto();
+    slideTimer = setInterval(showNextPhoto, Math.max(2, config.interval) * 1000);
+  }
+
+  function startAutoRefresh(){
+    clearInterval(refreshTimer);
+    refreshTimer = setInterval(fetchPhotoList, 30 * 60 * 1000); // 30分ごとに新着写真をチェック
+  }
+
+  /* ===================================================================
+     時計
+     =================================================================== */
+  function updateClock(){
+    const now = new Date();
+    document.getElementById('hm').textContent =
+      `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+    document.getElementById('ss').textContent = String(now.getSeconds()).padStart(2,'0');
+    const days = ['日','月','火','水','木','金','土'];
+    document.getElementById('dateText').textContent =
+      `${now.getFullYear()}年${now.getMonth()+1}月${now.getDate()}日（${days[now.getDay()]}）`;
+  }
+  updateClock();
+  setInterval(updateClock, 1000);
+
+  /* ===================================================================
+     設定パネル
+     =================================================================== */
+  function openSettings(){
+    document.getElementById('folderUrl').value = config.folderUrl;
+    document.getElementById('interval').value  = config.interval;
+    document.getElementById('errorMsg').textContent = '';
+    updateAccountUI();
+    document.getElementById('settings').classList.add('open');
+  }
+  function closeSettings(){
+    document.getElementById('settings').classList.remove('open');
+  }
+  function saveSettings(){
+    const folderUrl = document.getElementById('folderUrl').value.trim();
+    const interval  = parseInt(document.getElementById('interval').value, 10) || 10;
+
+    if(!extractFolderId(folderUrl)){
+      document.getElementById('errorMsg').textContent = 'フォルダURLの形式を確認してください。';
+      return;
+    }
+
+    config = { folderUrl, interval };
+    storageSet('pf_folderUrl', folderUrl);
+    storageSet('pf_interval', String(interval));
+    closeSettings();
+    fetchPhotoList();
+    startAutoRefresh();
+  }
+
+  document.getElementById('settings').addEventListener('click', (e) => {
+    if(e.target.id === 'settings') closeSettings();
+  });
+  gearEl.addEventListener('keydown', (e) => {
+    if(e.key === 'Enter' || e.key === ' ') openSettings();
+  });
+
+  /* ===================================================================
+     アイドル時にカーソル／設定アイコンを隠す（キオスク表示向け）
+     =================================================================== */
+  let idleTimer = null;
+  function resetIdle(){
+    document.body.classList.remove('idle');
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => document.body.classList.add('idle'), 6000);
+  }
+  ['mousemove','touchstart','click','keydown'].forEach(ev => document.addEventListener(ev, resetIdle));
+  resetIdle();
+
+  /* ===================================================================
+     初期化
+     =================================================================== */
+  initGis();
+</script>
+</body>
+</html>
